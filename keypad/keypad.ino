@@ -1,51 +1,21 @@
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
-#include <Keypad.h>
 #include <PubSubClient.h>
-#include <Wire.h>
-
-#include "Keypad_I2C.h"
 #include "secrets.h"
 
-#define I2CADDR 0x20
-
-// Update these with values suitable for your network.
 const char *SSID = "diskworld";
 const char *PASSWORD = SECRETS_WIFI_PASSWORD;
 const char *MQTT_SERVER = "192.168.0.10";
 const char *MQTT_USER = "keypad";
 const char *MQTT_PASSWORD = SECRETS_MQTT_PASSWORD;
 const char *MQTT_CLIENT_ID = "keypad";
-const char *UPDATE_TOPIC = "home/keypads/outer_door/code";
 const char *OTA_HOST = "keypad";
 const char *OTA_PASSWORD = SECRETS_OTA_PASSWORD;
 const char *AVAILABILITY_TOPIC = "home/keypads/outer_door/available";
 const int AVAILABILITY_INTERVAL = 60000;
 
-int ts;
-
-/* WiFi */
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-/* MQTT */
-void reconnect() {
-  while (!client.connected()) {
-    if (!client.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASSWORD)) {
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
-
-void sendCode(char code[]) {
-  Serial.println("Sending " + String(code));
-  client.publish(UPDATE_TOPIC, code);
-}
-
 /* wifi */
+WiFiClient espClient;
 
 void wifi_setup() {
   WiFi.mode(WIFI_STA);
@@ -90,8 +60,31 @@ void ota_setup() {
 void ota_loop() { ArduinoOTA.handle(); }
 
 /* mqtt */
+PubSubClient client(espClient);
 
-void mqtt_setup() { client.setServer(MQTT_SERVER, 1883); }
+void reconnect() {
+  while (!client.connected()) {
+    bool connected = client.connect(
+      MQTT_CLIENT_ID,
+      MQTT_USER,
+      MQTT_PASSWORD,
+      AVAILABILITY_TOPIC,
+      1,
+      false,
+      "offline");
+    if (!connected) {
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void mqtt_setup() {
+  client.setServer(MQTT_SERVER, 1883);
+  client.setCallback(mqtt_callback);
+}
+
 void mqtt_loop() {
   if (!client.connected()) {
     reconnect();
@@ -99,11 +92,46 @@ void mqtt_loop() {
   client.loop();
 }
 
-/* keypad */
+/* **************************************************************
+ * Main
+ * *************************************************************/
+
+int ts = 0;
+
+void setup() {
+  Serial.begin(9600);
+  wifi_setup();
+  mqtt_setup();
+  ota_setup();
+  custom_setup();
+}
+
+void loop() {
+  mqtt_loop();
+  ota_loop();
+  custom_loop();
+  if (ts == 0 || millis() - ts > AVAILABILITY_INTERVAL) {
+    ts = millis();
+    client.publish(AVAILABILITY_TOPIC, "online");
+  }
+}
+
+/* **************************************************************
+ * Custom
+ * *************************************************************/
+
+#include <Wire.h>
+#include <Keypad.h>
+#include "Keypad_I2C.h"
+#define I2CADDR 0x20
 
 const byte KEYPAD_ROWS = 4;
 const byte KEYPAD_COLS = 4;
 const uint8_t MAX_LENGTH = 20;
+const int TIMEOUT = 10000;
+const char *UPDATE_TOPIC = "home/keypads/outer_door/code";
+
+int key_ts;
 
 const char keys[KEYPAD_ROWS][KEYPAD_COLS] = {{'1', '2', '3', 'A'},
                                              {'4', '5', '6', 'B'},
@@ -127,7 +155,24 @@ struct Entry {
 Entry *start = nullptr;
 Entry *end = nullptr;
 
+void reset() {
+  while (start != nullptr) {
+    Entry *t = start;
+    start = t->next;
+    delete t;
+  }
+  start = nullptr;
+  end = nullptr;
+  key_ts = 0;
+}
+
+void sendCode(char code[]) {
+  Serial.println("Sending " + String(code));
+  client.publish(UPDATE_TOPIC, code);
+}
+
 void handleKey(char key) {
+  key_ts = millis();
   if (key == '#') {
     char code[length];
     uint8_t i = 0;
@@ -167,40 +212,24 @@ void handleKey(char key) {
   }
 }
 
-void keypad_setup() {
-  Wire.begin(0, 2);
-  kpd.begin(makeKeymap(keys));
+/* handlers */
+
+void mqtt_callback(char *topic, byte *payload, unsigned int length) {
 }
 
-void keypad_loop() {
+void custom_setup() {
+  Wire.begin(0, 2);
+  kpd.begin(makeKeymap(keys));
+  Serial.println("Keypad ready...");
+}
+
+void custom_loop() {
+  if (key_ts != 0 && millis() - key_ts > TIMEOUT) {
+    reset();
+  }
   char key = kpd.getKey();
   if (key) {
     Serial.println(key);
     handleKey(key);
   }
-}
-
-void availability_loop() {
-  if (millis() - ts > AVAILABILITY_INTERVAL) {
-    ts = millis();
-    client.publish(AVAILABILITY_TOPIC, "online");
-  }
-}
-
-/* main */
-
-void setup() {
-  Serial.begin(9600);
-  wifi_setup();
-  mqtt_setup();
-  ota_setup();
-  keypad_setup();
-  Serial.println("Keypad ready...");
-}
-
-void loop() {
-  mqtt_loop();
-  ota_loop();
-  keypad_loop();
-  availability_loop();
 }
