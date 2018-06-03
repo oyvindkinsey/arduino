@@ -6,14 +6,13 @@
 const char *SSID = "diskworld";
 const char *PASSWORD = SECRETS_WIFI_PASSWORD;
 const char *MQTT_SERVER = "192.168.0.10";
-const char *MQTT_USER = "relay";
+const char *MQTT_USER = "buzzer";
 const char *MQTT_PASSWORD = SECRETS_MQTT_PASSWORD;
 const char *MQTT_CLIENT_ID = "outer_door";
-const char *OTA_HOST = "relay";
+const char *OTA_HOST = "buzzer";
 const char *OTA_PASSWORD = SECRETS_OTA_PASSWORD;
 const char *AVAILABILITY_TOPIC = "home/locks/outer_door/available";
 const int AVAILABILITY_INTERVAL = 60000;
-
 /* wifi */
 WiFiClient espClient;
 
@@ -63,7 +62,6 @@ void ota_loop() { ArduinoOTA.handle(); }
 PubSubClient client(espClient);
 
 void reconnect() {
-
   while (!client.connected()) {
     bool connected = client.connect(
       MQTT_CLIENT_ID,
@@ -71,7 +69,7 @@ void reconnect() {
       MQTT_PASSWORD,
       AVAILABILITY_TOPIC,
       1,
-      0,
+      false,
       "offline");
     if (!connected) {
       Serial.print(client.state());
@@ -84,7 +82,6 @@ void reconnect() {
 void mqtt_setup() {
   client.setServer(MQTT_SERVER, 1883);
   client.setCallback(mqtt_callback);
-  client.publish("home/locks/outer_door", "LOCK");
 }
 
 void mqtt_loop() {
@@ -102,14 +99,10 @@ int ts = 0;
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("Setup");
-  Serial.println("wifi");
   wifi_setup();
-  Serial.println("ota");
+  mqtt_setup();
   ota_setup();
-  Serial.println("custom");
   custom_setup();
-  client.publish("home/locks/outer_door/hello", "hello");
 }
 
 void loop() {
@@ -118,7 +111,8 @@ void loop() {
   custom_loop();
   if (ts == 0 || millis() - ts > AVAILABILITY_INTERVAL) {
     ts = millis();
-    client.publish(AVAILABILITY_TOPIC, "online_");
+    client.publish(AVAILABILITY_TOPIC, "online");
+    custom_status();
   }
 }
 
@@ -137,25 +131,27 @@ const int TIMEOUT = 30000;
 
 int buzzer_ts;
 
+char *status;
+
 void unlock() {
+  status = "UNLOCK";
   Serial.write(relON, sizeof(relON));
   buzzer_ts = millis();
   reconnect();
-  client.publish("home/locks/outer_door", "UNLOCK");
+  custom_status();
 }
 
 void lock() {
+  status = "LOCK";
   Serial.write(relOFF, sizeof(relOFF));
   buzzer_ts = 0;
   reconnect();
-  client.publish("home/locks/outer_door", "LOCK");
+  custom_status();
 }
 
 /* handlers */
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length) {
-  Serial.println("MQTT Callback");
-  client.publish("home/locks/outer_door/callback", (char *)payload);
   payload[length] = '\0';
   if (String((char *)payload) == "UNLOCK") {
     unlock();
@@ -165,10 +161,10 @@ void mqtt_callback(char *topic, byte *payload, unsigned int length) {
 }
 
 void custom_setup() {
-  Serial.println("Custom setup");
   lock()  ;
   reconnect();
   client.subscribe("home/locks/outer_door/set", 1);
+  custom_status();
   Serial.println("Lock ready...");
 }
 
@@ -177,3 +173,8 @@ void custom_loop() {
     lock();
   }
 }
+
+void custom_status() {
+  client.publish("home/locks/outer_door", status);
+}
+
