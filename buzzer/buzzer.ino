@@ -71,6 +71,7 @@ void reconnect() {
       1,
       false,
       "offline");
+    mqtt_subscribe();
     if (!connected) {
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
@@ -152,18 +153,21 @@ void lock() {
 /* handlers */
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length) {
-  payload[length] = '\0';
-  if (String((char *)payload) == "UNLOCK") {
+  std::string p((char *)payload, length);
+  if (p == "UNLOCK") {
     unlock();
   } else {
     lock();
   }
 }
 
+void mqtt_subscribe() {
+  client.subscribe("home/locks/outer_door/set", 1);
+}
+
 void custom_setup() {
   lock()  ;
   reconnect();
-  client.subscribe("home/locks/outer_door/set", 1);
   custom_status();
   Serial.println("Lock ready...");
 }
@@ -177,4 +181,3 @@ void custom_loop() {
 void custom_status() {
   client.publish("home/locks/outer_door", status);
 }
-
