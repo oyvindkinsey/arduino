@@ -122,62 +122,88 @@ void loop() {
  * *************************************************************/
 
  // channel 1
-const byte relON[] = {0xA0, 0x01, 0x01, 0xA2};
-const byte relOFF[] = {0xA0, 0x01, 0x00, 0xA1};
+const byte relON_1[] = {0xA0, 0x01, 0x01, 0xA2};
+const byte relOFF_1[] = {0xA0, 0x01, 0x00, 0xA1};
+const int TIMEOUT_1 = 30000;
+int buzzer_ts_1;
+char *status_1 = "LOCK";
 
-// channel 2
-// const byte relON[] = {0xA0, 0x02, 0x01, 0xA3};
-// const byte relOFF[] = {0xA0, 0x02, 0x00, 0xA2};
-const int TIMEOUT = 30000;
-
-int buzzer_ts;
-
-char *status;
-
-void unlock() {
-  status = "UNLOCK";
-  Serial.write(relON, sizeof(relON));
-  buzzer_ts = millis();
-  reconnect();
-  custom_status();
+void unlock_1() {
+  status_1 = "UNLOCK";
+  Serial.write(relON_1, sizeof(relON_1));
+  buzzer_ts_1 = millis();
 }
 
-void lock() {
-  status = "LOCK";
-  Serial.write(relOFF, sizeof(relOFF));
-  buzzer_ts = 0;
-  reconnect();
-  custom_status();
+void lock_1() {
+  status_1 = "LOCK";
+  Serial.write(relOFF_1, sizeof(relOFF_1));
+  buzzer_ts_1 = 0;
+}
+// channel 2
+const byte relON_2[] = {0xA0, 0x02, 0x01, 0xA3};
+const byte relOFF_2[] = {0xA0, 0x02, 0x00, 0xA2};
+const int TIMEOUT_2 = 30000;
+int buzzer_ts_2;
+char *status_2 = "LOCK";
+
+void unlock_2() {
+  status_2 = "UNLOCK";
+  Serial.write(relON_2, sizeof(relON_2));
+  buzzer_ts_2 = millis();
+}
+
+void lock_2() {
+  status_2 = "LOCK";
+  Serial.write(relOFF_2, sizeof(relOFF_2));
+  buzzer_ts_2 = 0;
 }
 
 /* handlers */
 
 void mqtt_callback(char *topic, byte *payload, unsigned int length) {
+  std::string t((char *)topic, length);
   std::string p((char *)payload, length);
-  if (p == "UNLOCK") {
-    unlock();
+
+  if (strcmp(topic, "home/locks/outer_door/set/1") == 0) {
+    if (p == "UNLOCK") {
+      unlock_1();
+    } else {
+      lock_1();
+    }
   } else {
-    lock();
+    if (p == "UNLOCK") {
+      unlock_2();
+    } else {
+      lock_2();
+    }
   }
+
+  reconnect();
+  custom_status();
 }
 
 void mqtt_subscribe() {
-  client.subscribe("home/locks/outer_door/set", 1);
+  client.subscribe("home/locks/outer_door/set/#", 1);
 }
 
 void custom_setup() {
-  lock()  ;
+  lock_1()  ;
+  lock_2()  ;
   reconnect();
   custom_status();
   Serial.println("Lock ready...");
 }
 
 void custom_loop() {
-  if (buzzer_ts != 0 && millis() - buzzer_ts > TIMEOUT) {
-    lock();
+  if (buzzer_ts_1 != 0 && millis() - buzzer_ts_1 > TIMEOUT_1) {
+    lock_1();
+  }
+  if (buzzer_ts_2 != 0 && millis() - buzzer_ts_2 > TIMEOUT_2) {
+    lock_2();
   }
 }
 
 void custom_status() {
-  client.publish("home/locks/outer_door", status);
+  client.publish("home/locks/outer_door/1", status_1);
+  client.publish("home/locks/outer_door/2", status_2);
 }
